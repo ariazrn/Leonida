@@ -305,13 +305,29 @@ class PageIndexTest(unittest.TestCase):
         self.assertTrue(pages[0]["complete"])
         self.assertEqual(pages[0]["q38_records"][0]["target_stream"], 1)
 
-    def test_new_page_after_a_continuation_is_reported_with_both_streams(self):
-        # The first page's q38 target stays out of reach even after both following streams, so the
-        # second page is consumed as a continuation before it is recognised as a new directory page.
+    def test_directory_magic_in_first_of_two_continuations(self):
+        first = header(0x100, q38=0xC0, counts=(0, 0, 1, 0))
+        put_q38(first, 0xC0, [(0x1234, 0x10, 0x190)])
+        middle = bytearray(b"\xbb" * 0x80)
+        middle[0x10:0x14] = b"0DRP"
+
+        pages, _ = page_index.index_streams([
+            (100, None, bytes(first)),
+            (200, None, bytes(middle)),
+            (300, None, bytes(0x80)),
+        ])
+
+        self.assertEqual([page["offset"] for page in pages], [100])
+        self.assertTrue(pages[0]["complete"])
+        self.assertEqual(pages[0]["q38_records"][0]["target_stream"], 2)
+
+    def test_truncated_page_keeps_its_continuation_without_claiming_next_directory(self):
+        # Keep the continuation already consumed when a complete new directory header appears.
         first = header(0x100, q38=0xC0, counts=(0, 0, 1, 0))
         put_q38(first, 0xC0, [(0x1234, 0x10, 0x10000)])
         cont = b"\xbb" * 0x100
         second = header(0x100, q38=0xC0, counts=(0, 0, 1, 0))
+        struct.pack_into("<Q", second, 8, BASE + 0x60)
         put_q38(second, 0xC0, [(0x5678, 0x10, 0x60)])
         with tempfile.TemporaryDirectory() as tmp:
             arc = os.path.join(tmp, "nextpage.rpf")
@@ -322,7 +338,7 @@ class PageIndexTest(unittest.TestCase):
                 doc = json.load(f)
         self.assertEqual(doc["summary"]["pages"], 2)
         reported, fresh = doc["pages"]
-        self.assertEqual([c["offset"] for c in reported["continuations"]], [offsets[1], offsets[2]])
+        self.assertEqual([c["offset"] for c in reported["continuations"]], [offsets[1]])
         self.assertFalse(reported["complete"])
         self.assertEqual(reported["error"], "resource ended before q38 was complete")
         self.assertEqual(reported["q38_records"], [])
