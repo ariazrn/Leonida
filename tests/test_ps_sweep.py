@@ -82,6 +82,39 @@ class Sampling(unittest.TestCase):
             with open(os.path.join(out, "sample.json"), encoding="utf-8") as f:
                 self.assertEqual(len(json.load(f)), int(buf.getvalue().split("sampled ")[1].split()[0]))
 
+    def test_sample_reuse_preserves_the_numbering_used_by_existing_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "out")
+            with open(os.path.join(tmp, "index.json"), "w", encoding="utf-8", newline="\n") as f:
+                json.dump(synthetic_index(), f)
+            args = ["sample", "--spirv", tmp, "--out", out, "--n", "40"]
+            with contextlib.redirect_stdout(io.StringIO()):
+                ps_sweep.main(args + ["--seed", "7"])
+                # Ensure the new seed really changes the selection and still works in a fresh folder.
+                fresh = os.path.join(tmp, "fresh")
+                ps_sweep.main(["sample", "--spirv", tmp, "--out", fresh, "--n", "40", "--seed", "8"])
+            sample = os.path.join(out, "sample.json")
+            with open(sample, "rb") as f:
+                original = f.read()
+            with open(os.path.join(fresh, "sample.json"), "rb") as f:
+                self.assertNotEqual(json.loads(original), json.load(f))
+
+            log_dir = os.path.join(out, "a_z")
+            os.makedirs(log_dir)
+            log = os.path.join(log_dir, "results_0.jsonl")
+            existing = b'{"i": 0, "targets": 1, "code": 0, "reason": ""}\n'
+            with open(log, "wb") as f:
+                f.write(existing)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(ps_sweep.main(args + ["--seed", "7"]), 0)
+                with self.assertRaisesRegex(SystemExit, "different sample.*new --out"):
+                    ps_sweep.main(args + ["--seed", "8"])
+            with open(sample, "rb") as f:
+                self.assertEqual(f.read(), original)
+            with open(log, "rb") as f:
+                self.assertEqual(f.read(), existing)
+
 
 class VertexShader(unittest.TestCase):
     def test_outputs_match_inputs_and_flat_locations(self):
