@@ -9,6 +9,7 @@ x.ogg.wav, x.opus.wav). Existing .wav files are skipped, so a stopped run contin
 next to itself. Resuming assumes the same set of sources: an existing plain-named WAV is trusted by name. Only an
 existing name shaped like a kept-extension one (x.ogg.wav, x.opus~2.wav) has its audio compared; if it differs,
 that file is left alone and the input moves on to the next ~N name.
+On Windows, a destination created during decoding is preserved and the conversion is reported as failed.
 
 The output is pcm_s16le at the stream's own sample rate and channel count (Opus is always 48 kHz). A single
 stream is trimmed to its Ogg Opus end granule minus pre-skip, because ffmpeg can keep samples beyond its declared
@@ -429,7 +430,14 @@ def decode(ffmpeg: str, src: str, dst: str):
             r = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace")
             if r.returncode != 0:
                 return False, (r.stderr.strip() or f"ffmpeg exited with {r.returncode}")
-            os.replace(tmp, dst)
+            if os.name == "nt":
+                # Windows rename fails atomically if another writer claimed the destination.
+                try:
+                    os.rename(tmp, dst)
+                except FileExistsError:
+                    return False, f"output already exists: {dst}"
+            else:
+                os.replace(tmp, dst)
         return True, ""
     except OSError as e:
         return False, str(e)

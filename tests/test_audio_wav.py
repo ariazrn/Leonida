@@ -614,6 +614,25 @@ class SameStemTest(unittest.TestCase):
 
 
 class FakeFfmpegDecodeTest(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows rename does not replace an existing file")
+    def test_decode_keeps_destination_created_while_ffmpeg_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dest = root / "track.wav"
+
+            def run_ffmpeg(cmd, **kwargs):
+                dest.write_bytes(b"previous output")
+                Path(cmd[-1]).write_bytes(b"new output")
+                return subprocess.CompletedProcess(cmd, 0)
+
+            with mock.patch.object(audio_wav.subprocess, "run", side_effect=run_ffmpeg):
+                ok, message = audio_wav.decode("fake-ffmpeg", str(root / "track.opus"), str(dest))
+
+            self.assertEqual(dest.read_bytes(), b"previous output")
+            self.assertFalse(ok)
+            self.assertIn("already exists", message)
+            self.assertEqual(list(root.iterdir()), [dest])
+
     def test_every_input_gets_its_own_wav(self):
         with tempfile.TemporaryDirectory() as tmp:
             src = os.path.join(tmp, "in")
