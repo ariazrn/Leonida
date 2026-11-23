@@ -190,9 +190,13 @@ def cmd_sample(a):
             else:
                 os.link(candidate, sample_path)
         except FileExistsError:
-            with open(sample_path, encoding="utf-8") as f:
-                if json.load(f) != sample:
-                    raise SystemExit("sample.json contains a different sample; use a new --out directory") from None
+            try:
+                with open(sample_path, encoding="utf-8") as f:
+                    existing = json.load(f)
+            except (OSError, ValueError) as exc:
+                raise SystemExit(f"cannot read existing sample.json: {exc}; use a new --out directory") from None
+            if existing != sample:
+                raise SystemExit("sample.json contains a different sample; use a new --out directory") from None
     print(f"population {len(ps)} strata {len(per)} sampled {len(picked)}")
     for s in sorted(per, key=str):
         print(f"  stratum {s}: population {per[s][0]} sampled {per[s][1]}")

@@ -116,6 +116,26 @@ class Sampling(unittest.TestCase):
                 self.assertEqual(f.read(), existing)
 
 
+    def test_sample_reports_unreadable_existing_sample(self):
+        for bad_sample in (b"{truncated", b"\xff", None):
+            with self.subTest(bad_sample=bad_sample), tempfile.TemporaryDirectory() as out:
+                with open(os.path.join(out, "index.json"), "w", encoding="utf-8", newline="\n") as f:
+                    json.dump(synthetic_index(), f)
+                sample = os.path.join(out, "sample.json")
+                if bad_sample is None:
+                    os.mkdir(sample)
+                else:
+                    with open(sample, "wb") as f:
+                        f.write(bad_sample)
+                with self.assertRaisesRegex(SystemExit, "cannot read existing sample.json.*new --out"):
+                    ps_sweep.main(["sample", "--spirv", out, "--out", out, "--n", "40"])
+                if bad_sample is None:
+                    self.assertTrue(os.path.isdir(sample))
+                else:
+                    with open(sample, "rb") as f:
+                        self.assertEqual(f.read(), bad_sample)
+
+
 class VertexShader(unittest.TestCase):
     def test_outputs_match_inputs_and_flat_locations(self):
         glsl = ps_sweep.vs_glsl([0, 2, 5], {2})
