@@ -267,6 +267,44 @@ class PageIndexTest(unittest.TestCase):
                              [(0x1111, 0x10, 0x60, 0), (0x2222, 0x20, 0x120, 1)])
             self.assertEqual(page_doc["span"], 0x140)
 
+    def test_directory_header_cannot_complete_preceding_truncated_page(self):
+        first = header(0x100, q38=0xC0, counts=(0, 0, 1, 0))
+        put_q38(first, 0xC0, [(0x1234, 0x10, 0x1A0)])
+        continuation = b"\xbb" * 0x80
+        second = header(0x100, q38=0xC0, counts=(0, 0, 1, 0))
+        struct.pack_into("<Q", second, 8, BASE + 0x60)
+        put_q38(second, 0xC0, [(0x5678, 0x10, 0x60)])
+
+        pages, seen = page_index.index_streams([
+            (100, None, bytes(first)),
+            (200, None, continuation),
+            (300, None, bytes(second)),
+        ])
+
+        self.assertEqual(seen, 3)
+        self.assertEqual([page["offset"] for page in pages], [100, 300])
+        truncated, fresh = pages
+        self.assertFalse(truncated["complete"])
+        self.assertEqual([c["offset"] for c in truncated["continuations"]], [200])
+        self.assertEqual(truncated["error"], "resource ended before q38 was complete")
+        self.assertTrue(fresh["complete"])
+        self.assertEqual(fresh["q38_records"][0]["hash"], 0x5678)
+
+    def test_directory_magic_in_payload_does_not_split_a_continuation(self):
+        first = header(0x100, q38=0xC0, counts=(0, 0, 1, 0))
+        put_q38(first, 0xC0, [(0x1234, 0x10, 0x120)])
+        continuation = bytearray(b"\xbb" * 0x80)
+        continuation[0x10:0x14] = b"0DRP"
+
+        pages, _ = page_index.index_streams([
+            (100, None, bytes(first)),
+            (200, None, bytes(continuation)),
+        ])
+
+        self.assertEqual(len(pages), 1)
+        self.assertTrue(pages[0]["complete"])
+        self.assertEqual(pages[0]["q38_records"][0]["target_stream"], 1)
+
     def test_new_page_after_a_continuation_is_reported_with_both_streams(self):
         # The first page's q38 target stays out of reach even after both following streams, so the
         # second page is consumed as a continuation before it is recognised as a new directory page.

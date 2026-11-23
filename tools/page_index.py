@@ -85,6 +85,12 @@ def is_page(data):
     return len(data) >= HEADER_SIZE and data[0x10:0x14] == b"0DRP"
 
 
+def has_directory_header(data):
+    """Recognize a directory at a stream boundary using more than the magic alone."""
+    return (is_page(data) and data[:8] == b"\0" * 8
+            and offset_of(_u64(data, 8)) is not None and _u32(data, 0x14) == 122)
+
+
 def scan_rpf(path, start=None, limit=None):
     """Yield (archive_offset, stored_bytes, inflated_bytes) for each zlib stream."""
     with open(path, "rb") as fh:
@@ -305,6 +311,12 @@ def index_streams(streams, progress=None):
             progress(streams_seen, len(pages))
         if waiting is not None:
             page, base, cont = waiting
+            if has_directory_header(data):
+                # A new directory cannot supply payload for the previous resource.
+                page["error"] = page["error"] or "resource ended before q38 was complete"
+                add(page)
+                waiting = start(offset, stored, data)
+                continue
             cont.append((offset, stored, data))
             page, complete = parse_page(base, cont)
             page["offset"] = waiting[0]["offset"]
