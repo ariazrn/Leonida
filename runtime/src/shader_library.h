@@ -20,6 +20,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <locale>
+#include <sstream>
 #include <map>
 #include <span>
 #include <string>
@@ -504,17 +506,36 @@ private:
         if (literal("true")) return out.kind = Json::Kind::boolean, out.boolean = true, true;
         if (literal("false")) return out.kind = Json::Kind::boolean, out.boolean = false, true;
         if (literal("null")) return out.kind = Json::Kind::null, true;
-        // Numbers through strtod: Apple's libc++ does not provide the floating-point from_chars overload. The
-        // token is already limited to JSON number characters, and the end check requires all of it to be consumed.
+        // JSON numbers have their own grammar (no leading plus, leading zeroes or bare decimal point).
+        // Use the classic locale rather than the process locale, which the guest may change.
         const std::size_t start = pos_;
-        while (pos_ < text_.size() && std::strchr("+-0123456789.eE", text_[pos_])) ++pos_;
-        if (pos_ == start) return false;
+        const auto digit = [&] { return pos_ < text_.size() && text_[pos_] >= '0' && text_[pos_] <= '9'; };
+        const auto take = [&](char expected) {
+            if (pos_ == text_.size() || text_[pos_] != expected) return false;
+            ++pos_;
+            return true;
+        };
+        take('-');
+        if (!take('0')) {
+            if (!digit()) return false;
+            do { ++pos_; } while (digit());
+        }
+        if (take('.')) {
+            if (!digit()) return false;
+            do { ++pos_; } while (digit());
+        }
+        if (take('e') || take('E')) {
+            if (!take('+')) take('-');
+            if (!digit()) return false;
+            do { ++pos_; } while (digit());
+        }
+        std::istringstream input(std::string(text_.substr(start, pos_ - start)));
+        input.imbue(std::locale::classic());
+        double number = 0;
+        if (!(input >> std::noskipws >> number) || !input.eof()) return false;
         out.kind = Json::Kind::number;
-        const std::string token(text_.substr(start, pos_ - start));
-        char* end = nullptr;
-        errno = 0;
-        out.number = std::strtod(token.c_str(), &end);
-        return errno != ERANGE && end == token.c_str() + token.size();
+        out.number = number;
+        return true;
     }
 
     static int hex_digit(char c) {
@@ -530,6 +551,7 @@ private:
             const char c = text_[pos_++];
             if (c == '"') return true;
             if (c != '\\') {
+                if (static_cast<unsigned char>(c) < 0x20) return false;
                 out.push_back(c);
                 continue;
             }

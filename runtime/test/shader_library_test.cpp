@@ -588,6 +588,22 @@ int main() {
     CHECK(!JsonReader("[-]").parse(json));
     CHECK(!JsonReader("[1e999]").parse(json));
     CHECK(!JsonReader("[1.2.3]").parse(json));
+    for (const char* bad : {"[+1]", "[01]", "[-01]", "[.5]", "[1.]", "[1e]", "[1e+]", "[1e+-2]"})
+        CHECK(!JsonReader(bad).parse(json));
+    CHECK(!JsonReader(std::string("\"bad\nstring\"")).parse(json));
+    {
+        struct CommaDecimal : std::numpunct<char> {
+            char do_decimal_point() const override { return ','; }
+        };
+        const auto old_locale = std::locale();
+        std::locale::global(std::locale(old_locale, new CommaDecimal));
+        Json number;
+        const bool ok = JsonReader("-1.25e+2").parse(number);
+        std::locale::global(old_locale);
+        CHECK(ok && number.kind == Json::Kind::number && number.number == -125);
+        CHECK(JsonReader("0").parse(number) && number.number == 0);
+        CHECK(JsonReader("1E-2").parse(number) && number.number == 0.01);
+    }
     CHECK(!JsonReader("\"\\uzzzz\"").parse(json));
     CHECK(!JsonReader("\"\\u0x41\"").parse(json));
     CHECK(!JsonReader("\"\\u00").parse(json));
